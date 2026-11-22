@@ -1,0 +1,18 @@
+# 更新记录 / Changelog
+
+格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
+## [Unreleased]
+- 模拟盘端到端验证与 AI Builder 归因确认
+
+## [0.1.0] - 2026-11-22
+### 新增
+- `report`：只读交易体检报告（成交额、手续费、手续费/成交额、吃单比例、交易频率、一年手续费占权益、红黄绿灯），支持分页拉取近 90 天成交。
+- `buy` / `sell`：现货市价/限价下单，带护栏：品种白名单、单笔上限、每日笔数、每日买入额、同品种冷却、HALT 一键暂停。
+- 只允许 cash 模式（账户模式 1/2），拒绝杠杆/合约账户。
+- 卖出必须写明数量；按 `lotSz` 向下取整；检查最小下单量和最小下单额。
+- 幂等：由意图生成确定性 `clOrdId`，重跑先查询；提交结果未知时拒绝自动重下，并计入限额。
+- 下单后回查订单状态、均价、手续费，并校验 `tag` 是否为 AI Builder Code。
+- JSONL 审计日志（不记录密钥），文件锁防止并发运行。
+- 默认模拟盘；实盘需要 `OKX_PROFILE=live` 且 `--confirm-live`。
+- 23 项离线测试（含 OKX 官方签名已知答案向量），GitHub Actions 在 Linux/macOS、Python 3.10–3.12 上运行。

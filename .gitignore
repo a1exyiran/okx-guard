@@ -1,0 +1,19 @@
+# 密钥与本地状态——绝不提交
+.env
+*.env
+demo.env
+live.env
+.okx-guard/
+audit.jsonl
+HALT
+lock
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.tmpvenv/
+
+# macOS
+.DS_Store

@@ -1,0 +1,15 @@
+{
+  "allowed_inst": [
+    "BTC-USDT",
+    "ETH-USDT"
+  ],
+  "max_order_quote": 20,
+  "max_orders_per_day": 3,
+  "max_daily_buy_quote": 50,
+  "cooldown_minutes": 60,
+  "allowed_ord_types": [
+    "market",
+    "limit"
+  ],
+  "state_dir": "~/.okx-guard"
+}
