@@ -37,7 +37,7 @@ A local, open-source OKX spot tool: <b>see what your trading costs, then trade w
 | 成交额、手续费合计、手续费/成交额 | 真实成本 |
 | 吃单（taker）比例 | 吃单费率通常高于挂单 |
 | 一年手续费占当前权益 | 按当前频率外推 |
-| 红 / 黄 / 绿灯 | 红：年化手续费超过权益 10% 或每天超过 10 单；黄：超过 3%、每天超过 3 单或吃单超过 80% |
+| 红 / 黄 / 绿灯 | 红：年化手续费超过权益 10% 或每天超过 10 单；黄：超过 3%、每天超过 3 单或吃单超过 80%；没有成交时显示“无成交记录”，不评级 |
 
 示例输出见 [docs/sample_report.md](docs/sample_report.md)（虚构数据）。
 
@@ -56,6 +56,7 @@ A local, open-source OKX spot tool: <b>see what your trading costs, then trade w
 | 防重复下单 | 同一意图生成固定 `clOrdId`，重跑会先查询；网络超时、结果未知时拒绝重下 |
 | 审计日志 | `~/.okx-guard/audit.jsonl`，每次尝试记一行，不记录任何密钥 |
 | 下单后回查 | 查询成交状态、均价、手续费 |
+| 网络断线自动重试 | 查询类请求断线或限频时最多重试 3 次；**下单请求从不自动重试**，结果未知时停下等人工核对 |
 | 默认模拟盘 | 实盘需要 `OKX_PROFILE=live` **并且**加 `--confirm-live` |
 
 所有限额都可以在 JSON 配置里改，见 [`guard_config.example.json`](guard_config.example.json) 和 [docs/CONFIG.md](docs/CONFIG.md)。

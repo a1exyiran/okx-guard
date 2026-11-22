@@ -71,11 +71,12 @@ class Base(unittest.TestCase):
         self.p1 = patch.object(client.requests, "get", side_effect=self.ex.get)
         self.p2 = patch.object(client.requests, "post", side_effect=self.ex.post)
         self.p3 = patch.object(g, "BUILDER_CODE", "Y1RAN01")
-        for p in (self.p1, self.p2, self.p3):
+        self.p4 = patch.object(g, "_sleep", lambda s: None)
+        for p in (self.p1, self.p2, self.p3, self.p4):
             p.start()
 
     def tearDown(self):
-        for p in (self.p1, self.p2, self.p3):
+        for p in (self.p1, self.p2, self.p3, self.p4):
             p.stop()
         self.tmp.cleanup()
 
@@ -242,6 +243,14 @@ class Report(unittest.TestCase):
         self.assertEqual(r["grade"], "绿")
         self.assertIn("绿灯", g.render_report(r))
 
+    def test_zero_fills_not_graded(self):
+        r = g.analyze([], Decimal("100"), 30)
+        self.assertEqual(r["grade"], g.NO_DATA)
+        text = g.render_report(r)
+        self.assertIn("无成交记录", text)
+        self.assertNotIn("绿灯", text)
+        self.assertIn("100.00", text)
+
     def test_grade_red_on_overtrading(self):
         r = {"orders_per_active_day": Decimal(12), "taker_ratio": Decimal(0)}
         self.assertEqual(g.grade(r), "红")
@@ -306,7 +315,8 @@ class Smoke(unittest.TestCase):
         self.lines = []
         self.ps = [patch.object(client.requests, "get", side_effect=self.ex.get),
                    patch.object(client.requests, "post", side_effect=self.ex.post),
-                   patch.object(g, "BUILDER_CODE", "")]
+                   patch.object(g, "BUILDER_CODE", ""),
+                   patch.object(g, "_sleep", lambda x: None)]
         for p in self.ps:
             p.start()
 
@@ -332,7 +342,8 @@ class Smoke(unittest.TestCase):
         self.assertEqual(self.ex.posts, [])
         self.assertFalse(res["failed"], res["items"])
         self.assertEqual(self.results(res)["带归因下单"], "WARN")
-        self.assertIn("绿灯", res["report"])
+        self.assertIn("无成交记录", res["report"])
+        self.assertNotIn("绿灯", res["report"])
 
     def test_full_run_buys_sells_and_checks_tags(self):
         res = self.run_smoke("Y1RAN01")
@@ -376,6 +387,71 @@ class Smoke(unittest.TestCase):
 
     def test_hint_for_known_error(self):
         self.assertIn("交易权限", s.with_hint("读取账户配置 失败: code=50123 msg=x"))
+
+
+class Retry(Base):
+    def flaky(self, n_fail, path, payload=None):
+        """前 n_fail 次访问 path 时断线（或返回 payload），之后恢复正常。"""
+        state = {"n": 0}
+        orig = self.ex.get
+
+        def get(url, headers=None, timeout=None):
+            if urlparse(url).path == path and state["n"] < n_fail:
+                state["n"] += 1
+                if payload is None:
+                    raise client.requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING")
+                return FakeResp(payload)
+            return orig(url, headers=headers, timeout=timeout)
+        return state, get
+
+    def test_transient_read_errors_are_retried(self):
+        st, get = self.flaky(2, client.PATH_ACCOUNT_CONFIG)
+        with patch.object(client.requests, "get", side_effect=get):
+            res = self.buy()
+        self.assertEqual(st["n"], 2)
+        self.assertEqual(res["status"], "submitted")
+        self.assertEqual(len(self.ex.posts), 1)
+
+    def test_rate_limit_is_retried(self):
+        st, get = self.flaky(1, client.PATH_MARKET_TICKER, {"code": "50011", "msg": "Too Many Requests", "data": []})
+        with patch.object(client.requests, "get", side_effect=get):
+            res = self.buy()
+        self.assertEqual(st["n"], 1)
+        self.assertEqual(res["status"], "submitted")
+
+    def test_exhausted_reads_block_order(self):
+        st, get = self.flaky(99, client.PATH_ACCOUNT_CONFIG)
+        with patch.object(client.requests, "get", side_effect=get):
+            with self.assertRaisesRegex(g.GuardError, "重试"):
+                self.buy()
+        self.assertEqual(st["n"], g.READ_RETRIES)
+        self.assertEqual(self.ex.posts, [])
+
+    def test_report_fetch_retries(self):
+        st, get = self.flaky(2, g.PATH_FILLS_HISTORY)
+        with patch.object(client.requests, "get", side_effect=get):
+            out = g.fetch_fills(self.creds, sleep=lambda s: None)
+        self.assertEqual(st["n"], 2)
+        self.assertEqual(out, [])
+
+    def test_order_post_is_never_retried(self):
+        self.ex.fail_post = client.requests.exceptions.SSLError("EOF")
+        with self.assertRaisesRegex(g.GuardError, "未知"):
+            self.buy()
+        self.assertEqual(len(self.ex.posts), 1)
+
+    def test_reconcile_survives_network_loss_after_order(self):
+        orig = self.ex.get
+
+        def get(url, headers=None, timeout=None):
+            if urlparse(url).path == g.PATH_TRADE_ORDER and self.ex.posts:
+                raise client.requests.exceptions.ConnectionError("down")
+            return orig(url, headers=headers, timeout=timeout)
+        with patch.object(client.requests, "get", side_effect=get):
+            res = self.buy()
+        self.assertEqual(res["status"], "submitted")
+        self.assertFalse(res["tag_ok"])
+        self.assertEqual(len(self.ex.posts), 1)
 
 
 if __name__ == "__main__":

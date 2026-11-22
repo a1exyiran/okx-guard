@@ -134,8 +134,8 @@ def smoke_run(env_path: str = DEFAULT_ENV, code: str | None = None, inst: str = 
 
     # 3. 签名、权限、账户模式
     try:
-        data = g._ok(client.get_account_config(creds.base_url, creds.api_key, creds.secret_key,
-                                               creds.passphrase, simulated=True), "读取账户配置")
+        data = g._ok(g.read_retry(client.get_account_config, creds.base_url, creds.api_key, creds.secret_key,
+                                  creds.passphrase, simulated=True, what="读取账户配置"), "读取账户配置")
         cfg0 = data[0] if data else {}
         rep.add("签名与 Key 有效", "PASS")
     except Exception as e:  # noqa: BLE001
@@ -161,8 +161,8 @@ def smoke_run(env_path: str = DEFAULT_ENV, code: str | None = None, inst: str = 
 
     # 4. 余额
     try:
-        bal = g._ok(client.get_account_balance(creds.base_url, creds.api_key, creds.secret_key,
-                                               creds.passphrase, ccy=quote_ccy, simulated=True), "读取余额")
+        bal = g._ok(g.read_retry(client.get_account_balance, creds.base_url, creds.api_key, creds.secret_key,
+                                 creds.passphrase, ccy=quote_ccy, simulated=True, what="读取余额"), "读取余额")
         details = (bal[0].get("details") or []) if bal else []
         avail = next((Decimal(d.get("availBal") or "0") for d in details if d.get("ccy") == quote_ccy), Decimal(0))
         enough = avail >= quote
@@ -178,7 +178,8 @@ def smoke_run(env_path: str = DEFAULT_ENV, code: str | None = None, inst: str = 
         fills = g.fetch_fills(creds, days=30, sleep=sleep)
         r = g.analyze(fills, g.equity(creds), 30, code or None)
         out["report"] = g.render_report(r)
-        rep.add("体检报告（近 30 天，只读）", "PASS", f"{r['fills']} 笔成交，{r['grade']}灯")
+        rep.add("体检报告（近 30 天，只读）", "PASS",
+                "无成交记录，暂不评级" if r["fills"] == 0 else f"{r['fills']} 笔成交，{r['grade']}灯")
     except Exception as e:  # noqa: BLE001
         rep.add("体检报告（近 30 天，只读）", "FAIL", with_hint(str(e)))
 

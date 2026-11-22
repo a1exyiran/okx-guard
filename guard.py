@@ -30,7 +30,7 @@ import okx_openapi_client as client
 # 不从环境变量读取，避免部署环境误覆盖导致归因错误（与 OKX demo 一致）。
 BUILDER_CODE = ""
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 DEFAULT_BASE_URL = "https://www.okx.com"
 PATH_TRADE_ORDER = client.PATH_TRADE_ORDER  # GET 同一路径 = 查询订单
 PATH_FILLS_HISTORY = "/api/v5/trade/fills-history"
@@ -40,6 +40,32 @@ MIN_NOTIONAL_FALLBACK = Decimal("1")  # demo 实测 51020：约 1 USDT
 
 class GuardError(Exception):
     """可预期的拒绝（护栏/前置检查/配置）。"""
+
+
+# --------------------------------------------------------------------------- 只读请求自动重试
+# 只用于查询类（GET）请求。下单请求绝不经过这里：结果未知时宁可停下，也不重复下单。
+RETRY_EXC = (client.requests.exceptions.ConnectionError, client.requests.exceptions.Timeout)
+READ_RETRIES = 3
+RATE_LIMIT_CODES = {"50011"}
+_sleep = time.sleep
+
+
+def read_retry(fn, *args, what: str = "查询", **kwargs):
+    last = ""
+    for i in range(READ_RETRIES):
+        try:
+            resp = fn(*args, **kwargs)
+        except RETRY_EXC as e:
+            last = f"网络错误 {type(e).__name__}"
+        else:
+            status = resp.get("_http_status") if isinstance(resp, dict) else None
+            transient = isinstance(resp, dict) and (resp.get("code") in RATE_LIMIT_CODES or (status or 0) >= 500)
+            if not transient:
+                return resp
+            last = f"code={resp.get('code') or status}"
+        if i + 1 < READ_RETRIES:
+            _sleep(1.5 * (i + 1))
+    raise GuardError(f"{what}失败：重试 {READ_RETRIES} 次仍不可用（{last}），请检查网络或代理")
 
 
 # --------------------------------------------------------------------------- 配置
@@ -104,11 +130,15 @@ def builder_code() -> str:
 
 
 # --------------------------------------------------------------------------- 签名 GET（复用官方签名助手）
-def signed_get(creds: Creds, path: str, params: dict) -> dict:
+def _signed_get_once(creds: Creds, path: str, params: dict) -> dict:
     request_path = client._with_query(path, params)
     headers = client._headers(creds.api_key, creds.secret_key, creds.passphrase,
-                              "GET", request_path, "", creds.simulated)
+                              "GET", request_path, "", creds.simulated)  # 每次重试都重新签名（新时间戳）
     return client._parse(client.requests.get(creds.base_url + request_path, headers=headers, timeout=10))
+
+
+def signed_get(creds: Creds, path: str, params: dict) -> dict:
+    return read_retry(_signed_get_once, creds, path, params, what=f"查询 {path}")
 
 
 def _ok(resp: dict, what: str) -> list:
@@ -221,18 +251,20 @@ def round_down(x: Decimal, step: Decimal) -> Decimal:
 
 # --------------------------------------------------------------------------- 下单流程
 def preflight(creds: Creds, inst_id: str) -> dict:
-    cfg_data = _ok(client.get_account_config(creds.base_url, creds.api_key, creds.secret_key,
-                                             creds.passphrase, simulated=creds.simulated), "读取账户配置")
+    cfg_data = _ok(read_retry(client.get_account_config, creds.base_url, creds.api_key, creds.secret_key,
+                              creds.passphrase, simulated=creds.simulated, what="读取账户配置"), "读取账户配置")
     acct_lv = str(cfg_data[0].get("acctLv")) if cfg_data else ""
     if acct_lv not in ("1", "2"):
         raise GuardError(f"账户模式 acctLv={acct_lv}：本工具只支持现货 cash 模式（acctLv 1/2），以免借币")
-    inst = _ok(client.get_instruments(creds.base_url, "SPOT", inst_id, simulated=creds.simulated), "读取品种规则")
+    inst = _ok(read_retry(client.get_instruments, creds.base_url, "SPOT", inst_id, simulated=creds.simulated,
+                          what="读取品种规则"), "读取品种规则")
     if not inst:
         raise GuardError(f"找不到品种 {inst_id}")
     inst = inst[0]
     if inst.get("state") not in (None, "", "live"):
         raise GuardError(f"{inst_id} 状态 {inst.get('state')}，不可交易")
-    tick = _ok(client.get_ticker(creds.base_url, inst_id, simulated=creds.simulated), "读取行情")
+    tick = _ok(read_retry(client.get_ticker, creds.base_url, inst_id, simulated=creds.simulated,
+                          what="读取行情"), "读取行情")
     last = Decimal(tick[0]["last"])
     return {"acctLv": acct_lv, "tdMode": "cash", "last": last,
             "lotSz": Decimal(inst["lotSz"]), "minSz": Decimal(inst["minSz"]),
@@ -316,7 +348,10 @@ def submit(intent: Intent, cfg: Config, creds: Creds, nonce: str, now: datetime 
 def reconcile(creds: Creds, inst_id: str, cid: str, poll: int = 5, sleep=time.sleep) -> dict | None:
     last = None
     for i in range(max(poll, 1)):
-        last = find_order(creds, inst_id, cid) or last
+        try:
+            last = find_order(creds, inst_id, cid) or last
+        except GuardError:
+            pass  # 订单已提交；回查失败只影响确认，不影响订单本身
         if last and last.get("state") in ("filled", "canceled", "mmp_canceled"):
             return last
         if i + 1 < poll:
@@ -369,8 +404,11 @@ def analyze(fills: list, equity_quote: Decimal | None, days: int, code: str | No
     if equity_quote and equity_quote > 0:
         res["equity"] = equity_quote.quantize(Decimal("0.01"))
         res["annual_fee_pct_of_equity"] = (fees / equity_quote * Decimal(365) / Decimal(days) * 100).quantize(Decimal("0.1"))
-    res["grade"] = grade(res)
+    res["grade"] = grade(res) if n else NO_DATA
     return res
+
+
+NO_DATA = "无数据"
 
 
 def grade(r: dict) -> str:
@@ -379,7 +417,21 @@ def grade(r: dict) -> str:
     return "红" if red else ("黄" if yellow else "绿")
 
 
+def _render_empty(r: dict) -> str:
+    lines = [f"# 交易体检报告（近 {r['days']} 天，现货，USDT/USDC 计价）", "",
+             "**结论：无成交记录，暂不评级**", "",
+             f"近 {r['days']} 天没有 USDT/USDC 计价的现货成交，没有可以分析的数据。"]
+    if r.get("skipped_non_stable"):
+        lines.append(f"另有 {r['skipped_non_stable']} 笔非 USDT/USDC 计价的成交未计入。")
+    if "equity" in r:
+        lines.append(f"当前权益：{r['equity']}")
+    lines += ["", "可以加 `--days 90` 查看更长时间，或交易一段时间后再来体检。"]
+    return "\n".join(lines)
+
+
 def render_report(r: dict) -> str:
+    if r["fills"] == 0:
+        return _render_empty(r)
     lines = [f"# 交易体检报告（近 {r['days']} 天，现货，USDT/USDC 计价）", "",
              f"**结论：{r['grade']}灯**", "",
              "| 指标 | 数值 |", "|---|---|",
@@ -401,8 +453,8 @@ def render_report(r: dict) -> str:
 
 def equity(creds: Creds) -> Decimal | None:
     try:
-        d = _ok(client.get_account_balance(creds.base_url, creds.api_key, creds.secret_key,
-                                           creds.passphrase, simulated=creds.simulated), "读取余额")
+        d = _ok(read_retry(client.get_account_balance, creds.base_url, creds.api_key, creds.secret_key,
+                           creds.passphrase, simulated=creds.simulated, what="读取余额"), "读取余额")
         return Decimal(d[0].get("totalEq") or "0") if d else None
     except (GuardError, decimal.InvalidOperation):
         return None
