@@ -170,9 +170,11 @@ OKX 会把这笔成交手续费的一部分返给开发者。
 - 每日限额以本地审计日志为准，换电脑或删日志会重置。
 - 按 OKX 全球站设计；其他站点需设置 `OKX_API_BASE_URL`，并自行核对接口。
 
-## 参与贡献
+## 参与贡献与联系
 
-欢迎提 issue 和 PR，请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 欢迎提 issue 和 PR，请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 合作或其他问题：they1rann@gmail.com
+- 安全问题请私下报告，见 [SECURITY.md](SECURITY.md)。
 
 ---
 
@@ -185,7 +187,7 @@ okx-guard is an unofficial, open-source tool that runs on your own machine with 
 - Demo trading is the default. Live trading requires `OKX_PROFILE=live` **and** `--confirm-live`. Never enable withdrawal permission on the key.
 - **Disclosure:** orders carry the developer's OKX AI Builder Code in the `tag` field, and OKX shares part of the trading fee with the developer. The tool charges nothing extra.
 
-Not financial advice. Not affiliated with OKX.
+Not financial advice. Not affiliated with OKX. Contact: they1rann@gmail.com
 
 ## License
 

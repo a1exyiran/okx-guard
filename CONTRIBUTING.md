@@ -20,6 +20,7 @@ python -m unittest -v test_guard.py
 ## 提 issue
 - Bug：说明命令、期望结果、实际结果和退出码。**贴日志前请删掉所有密钥。**
 - 安全问题：不要公开提，见 [SECURITY.md](SECURITY.md)。
+- 其他联系：they1rann@gmail.com
 
 ---
 

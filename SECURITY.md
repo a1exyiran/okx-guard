@@ -1,8 +1,14 @@
 # 安全说明 / Security
 
 ## 报告漏洞
-请不要在公开 issue 里贴漏洞细节或任何 API Key。请通过 GitHub 的
-**Security → Report a vulnerability**（私密报告）联系维护者。
+请不要在公开 issue 里贴漏洞细节或任何 API Key。可以用以下任一方式私下联系维护者：
+
+- GitHub 仓库的 **Security → Report a vulnerability**（私密报告，推荐）
+- 邮件：they1rann@gmail.com（标题请以 `[okx-guard security]` 开头）
+
+我们会在 3 个工作日内回复。邮件里同样**不要**附带 API Key、Secret 或 Passphrase。
+
+**English:** Please report vulnerabilities privately via GitHub's "Report a vulnerability" or by email to they1rann@gmail.com (subject prefix `[okx-guard security]`). Never include API keys or secrets.
 
 ## 使用者须知
 - API Key 只开"读取"或"读取 + 交易"，**永远不要开提现**。
