@@ -34,4 +34,5 @@ jobs:
       - name: CLI smoke test
         run: |
           python cli.py --help
+          python smoke_demo.py --help
           python cli.py halt && python cli.py resume && python cli.py log

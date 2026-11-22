@@ -3,6 +3,11 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 新增
+- `smoke_demo.py`：模拟盘一键自检，覆盖 Key、签名、权限（拒绝提现权限）、账户模式、余额、体检报告，以及带归因的买入、卖回和成交记录 tag 核对；强制模拟盘，不输出密钥。
+- 自检相关的 8 项离线测试（共 31 项）。
+
+### 计划
 - 模拟盘端到端验证与 AI Builder 归因确认
 
 ## [0.1.0] - 2026-11-22

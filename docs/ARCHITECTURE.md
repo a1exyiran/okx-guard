@@ -8,6 +8,7 @@
 | `guard.py` | 配置、凭证、护栏、下单、对账、体检报告 |
 | `cli.py` | 命令行入口 |
 | `test_guard.py` | 离线测试，用 `FakeOKX` 模拟交易所 |
+| `smoke_demo.py` | 模拟盘一键自检（强制模拟盘，独立状态目录，不占用正式额度） |
 
 ## 下单流程（`guard.submit`）
 

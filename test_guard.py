@@ -9,6 +9,7 @@ from urllib.parse import urlparse, parse_qs
 
 import okx_openapi_client as client
 import guard as g
+import smoke_demo as s
 
 
 class FakeResp:
@@ -265,6 +266,116 @@ class CredsTest(unittest.TestCase):
     def test_default_demo(self):
         with patch.dict(os.environ, {"OKX_API_KEY": "a", "OKX_SECRET_KEY": "b", "OKX_PASSPHRASE": "c"}, clear=True):
             self.assertTrue(g.Creds.from_env().simulated)
+
+
+class SmokeFake(FakeOKX):
+    """在 FakeOKX 基础上补充权限字段、余额明细，并为每笔订单生成成交记录。"""
+
+    def __init__(self, perm="read_only,trade", **kw):
+        super().__init__(**kw)
+        self.perm = perm
+
+    def get(self, url, headers=None, timeout=None):
+        path = urlparse(url).path
+        if path == client.PATH_ACCOUNT_CONFIG:
+            self.gets.append((path, {}, headers))
+            return FakeResp({"code": "0", "data": [{"acctLv": self.acct_lv, "posMode": "net_mode", "perm": self.perm}]})
+        if path == client.PATH_ACCOUNT_BALANCE:
+            self.gets.append((path, {}, headers))
+            return FakeResp({"code": "0", "data": [{"totalEq": "100", "details": [{"ccy": "USDT", "availBal": "100"}]}]})
+        return super().get(url, headers=headers, timeout=timeout)
+
+    def post(self, url, headers=None, data=None, timeout=None):
+        r = super().post(url, headers=headers, data=data, timeout=timeout)
+        body = json.loads(data)
+        o = self.orders[body["clOrdId"]]
+        self.fills.append({"instId": body["instId"], "billId": str(len(self.fills) + 1), "ordId": o["ordId"],
+                           "tag": body.get("tag"), "fillPx": self.last, "fillSz": "0.0001", "fee": "-0.005",
+                           "feeCcy": "USDT", "execType": "T", "ts": "0"})
+        return r
+
+
+class Smoke(unittest.TestCase):
+    SECRETS = ("KEYzzz111", "SECyyy222", "PHRxxx333")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = os.path.join(self.tmp.name, "demo.env")
+        self.write_env("demo")
+        self.ex = SmokeFake()
+        self.lines = []
+        self.ps = [patch.object(client.requests, "get", side_effect=self.ex.get),
+                   patch.object(client.requests, "post", side_effect=self.ex.post),
+                   patch.object(g, "BUILDER_CODE", "")]
+        for p in self.ps:
+            p.start()
+
+    def tearDown(self):
+        for p in self.ps:
+            p.stop()
+        self.tmp.cleanup()
+
+    def write_env(self, profile):
+        with open(self.env, "w") as f:
+            f.write(f"OKX_PROFILE={profile}\nOKX_API_KEY={self.SECRETS[0]}\n"
+                    f"OKX_SECRET_KEY={self.SECRETS[1]}\nOKX_PASSPHRASE={self.SECRETS[2]}\n")
+
+    def run_smoke(self, code):
+        return s.smoke_run(self.env, code, state_dir=os.path.join(self.tmp.name, "st"),
+                           sleep=lambda x: None, log=self.lines.append)
+
+    def results(self, res):
+        return {i["step"]: i["result"] for i in res["items"]}
+
+    def test_read_only_without_code_places_no_orders(self):
+        res = self.run_smoke(None)
+        self.assertEqual(self.ex.posts, [])
+        self.assertFalse(res["failed"], res["items"])
+        self.assertEqual(self.results(res)["带归因下单"], "WARN")
+        self.assertIn("绿灯", res["report"])
+
+    def test_full_run_buys_sells_and_checks_tags(self):
+        res = self.run_smoke("Y1RAN01")
+        self.assertFalse(res["failed"], res["items"])
+        self.assertEqual([b["side"] for _, b, _, _ in self.ex.posts], ["buy", "sell"])
+        self.assertTrue(all(b["tag"] == "Y1RAN01" for _, b, _, _ in self.ex.posts))
+        self.assertTrue(all(h["x-simulated-trading"] == "1" for _, _, h, _ in self.ex.posts))
+        self.assertEqual(self.ex.posts[1][1]["sz"], "0.0000999")  # 0.0001 BTC 减去 0.0000001 BTC 手续费
+        self.assertEqual(self.results(res)["成交记录 tag"], "PASS")
+
+    def test_live_profile_refused_before_any_request(self):
+        self.write_env("live")
+        res = self.run_smoke("Y1RAN01")
+        self.assertTrue(res["failed"])
+        self.assertEqual(self.ex.gets, [])
+        self.assertEqual(self.ex.posts, [])
+
+    def test_withdraw_permission_refused(self):
+        self.ex.perm = "read_only,trade,withdraw"
+        res = self.run_smoke("Y1RAN01")
+        self.assertTrue(res["failed"])
+        self.assertEqual(self.ex.posts, [])
+
+    def test_margin_account_refused(self):
+        self.ex.acct_lv = "3"
+        res = self.run_smoke("Y1RAN01")
+        self.assertTrue(res["failed"])
+        self.assertEqual(self.ex.posts, [])
+
+    def test_bad_builder_code_refused(self):
+        res = self.run_smoke("bad-code!")
+        self.assertTrue(res["failed"])
+        self.assertEqual(self.ex.gets, [])
+
+    def test_no_secrets_in_output_or_result_file(self):
+        res = self.run_smoke("Y1RAN01")
+        with open(res["result_file"]) as f:
+            blob = f.read() + json.dumps(res, ensure_ascii=False, default=str) + "\n".join(self.lines)
+        for secret in self.SECRETS:
+            self.assertNotIn(secret, blob)
+
+    def test_hint_for_known_error(self):
+        self.assertIn("交易权限", s.with_hint("读取账户配置 失败: code=50123 msg=x"))
 
 
 if __name__ == "__main__":
